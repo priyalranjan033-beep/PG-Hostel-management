@@ -1,0 +1,36 @@
+
+:root {
+    font-family: Arial, sans-serif;
+    color: #263238;
+    background: #f4f6f9;
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    min-width: 320px;
+    min-height: 100vh;
+    color: #263238;
+    background: #f4f6f9;
+}
+
+button,
+input,
+select {
+    color: #263238;
+    font-family: Arial, sans-serif;
+}
+
+input::placeholder {
+    color: #757575;
+    opacity: 1;
+}
+
+button {
+    cursor: pointer;
+}
