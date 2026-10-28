@@ -5,7 +5,34 @@ import './App.css';
 
 const API = 'http://localhost:2001';
 
+axios.interceptors.request.use((config) => {
+    const token = localStorage.getItem('pgToken');
+
+    if (token) {
+        config.headers.Authorization = `Bearer ${token}`;
+    }
+
+    return config;
+});
+
 function App() {
+    const [confirmPassword, setConfirmPassword] = useState('');
+const [showPassword, setShowPassword] = useState(false);
+const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+const [authPhone, setAuthPhone] = useState('');
+const [myRents, setMyRents] = useState([]);
+const [complaintMessage, setComplaintMessage] = useState('');
+    const [user, setUser] = useState(
+    JSON.parse(localStorage.getItem('pgUser') || 'null')
+);
+const [authMode, setAuthMode] = useState('login');
+const [authForm, setAuthForm] = useState({
+    name: '',
+    email: '',
+    password: '',
+    tenant: ''
+});
+const [authError, setAuthError] = useState('');
     const [rooms, setRooms] = useState([]);
     const [tenants, setTenants] = useState([]);
     const [rents, setRents] = useState([]);
@@ -30,6 +57,81 @@ function App() {
         complaint: ''
     });
 
+const handleAuth = async (e) => {
+  e.preventDefault();
+  setAuthError('');
+
+  if (authMode === 'register') {
+    if (authForm.password !== confirmPassword) {
+      setAuthError('Passwords do not match.');
+      return;
+    }
+
+    const strongPassword =
+      /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{8,}$/;
+
+    if (!strongPassword.test(authForm.password)) {
+      setAuthError(
+        'Password must have 8+ characters, uppercase, lowercase, number and special character.'
+      );
+      return;
+    }
+  }
+
+  try {
+    const endpoint =
+      authMode === 'login' ? '/auth/login' : '/auth/register';
+
+    const payload =
+      authMode === 'login'
+        ? { email: authForm.email, password: authForm.password }
+        : {
+            name: authForm.name,
+            email: authForm.email,
+            password: authForm.password,
+            phone: authPhone
+          };
+
+    const response = await axios.post(`${API}${endpoint}`, payload);
+
+    if (authMode === 'register') {
+      setAuthMode('login');
+      setAuthError('Registration successful! Please log in.');
+      setConfirmPassword('');
+      return;
+    }
+
+    localStorage.setItem('pgToken', response.data.token);
+    localStorage.setItem('pgUser', JSON.stringify(response.data.user));
+    setUser(response.data.user);
+    setAuthForm({ name: '', email: '', password: '', tenant: '' });
+    setConfirmPassword('');
+    setPage(response.data.user.role === 'owner' ? 'Dashboard' : 'My Rent');
+  } catch (error) {
+    setAuthError(
+      error.response?.data?.message || 'Something went wrong. Try again.'
+    );
+  }
+};
+
+const logout = () => {
+  const firstConfirm = window.confirm(
+    'Are you sure you want to logout?'
+  );
+
+  if (!firstConfirm) return;
+
+  const secondConfirm = window.confirm(
+    'WARNING: You will be logged out of your account. Do you want to continue?'
+  );
+
+  if (!secondConfirm) return;
+
+  localStorage.removeItem('pgToken');
+  localStorage.removeItem('pgUser');
+  setUser(null);
+  setPage('Dashboard');
+};
     
 const loadData = async () => {
     try {
@@ -44,11 +146,34 @@ const loadData = async () => {
         setMessage('Cannot connect to backend. Check the server.');
     }
 };
+const loadMyRent = async () => {
+  try {
+    const response = await axios.get(`${API}/my-rent`);
+    setMyRents(response.data);
+  } catch (error) {
+    console.error(error);
+  }
+};
 
+const submitComplaint = async (e) => {
+  e.preventDefault();
+
+  try {
+    await axios.post(`${API}/my-complaint`, { complaint });
+    setComplaintMessage('Complaint submitted successfully');
+    setComplaint('');
+  } catch (error) {
+    setComplaintMessage(
+      error.response?.data?.message || 'Failed to submit complaint'
+    );
+  }
+};
 
     useEffect(() => {
+    if (user?.role === 'owner') {
         loadData();
-    }, []);
+    }
+}, [user]);
 
     const activeTenants = tenants.filter(
         (t) => !t.checkOutDate
@@ -180,7 +305,11 @@ const loadData = async () => {
         'Tenants',
         'Rent',
         'Maintenance'
+        
     ];
+    const visibleMenu = user?.role === 'tenant'
+    ? ['My Rent', 'Maintenance']
+    : menu;
 
     const availableBeds = rooms.reduce(
         (total, r) => total + r.totalBeds - r.occupiedBeds,
@@ -194,6 +323,132 @@ const loadData = async () => {
     const complaints = tenants.filter(
         (t) => t.complaint
     );
+    
+if (!user) {
+  return (
+    <div className="auth-page">
+      <form className="auth-card" onSubmit={handleAuth}>
+        <h1>PG Hostel Manager</h1>
+        <p className="auth-subtitle">
+          {authMode === 'login'
+            ? 'Welcome back! Sign in to continue.'
+            : 'Create your tenant account'}
+        </p>
+
+        {authMode === 'register' && (
+          <>
+            <label>Full Name</label>
+            <input
+              placeholder="e.g. Priya Sharma"
+              value={authForm.name}
+              onChange={(e) =>
+                setAuthForm({ ...authForm, name: e.target.value })
+              }
+              required
+            />
+
+            <label>Phone Number</label>
+            <input
+              type="tel"
+              placeholder="e.g. 9876543210"
+              value={authPhone}
+              onChange={(e) => setAuthPhone(e.target.value)}
+              required
+            />
+          </>
+        )}
+
+        <label>Email Address</label>
+        <input
+          type="email"
+          placeholder="e.g. priya@gmail.com"
+          value={authForm.email}
+          onChange={(e) =>
+            setAuthForm({ ...authForm, email: e.target.value })
+          }
+          required
+        />
+
+        <label>Password</label>
+        <div className="password-field">
+          <input
+            type={showPassword ? 'text' : 'password'}
+            placeholder="Enter your password"
+            value={authForm.password}
+            onChange={(e) =>
+              setAuthForm({ ...authForm, password: e.target.value })
+            }
+            required
+          />
+          <button
+            type="button"
+            className="eye-button"
+            onClick={() => setShowPassword(!showPassword)}
+            aria-label="Toggle password visibility"
+          >
+            {showPassword ? '🙈' : '👁️'}
+          </button>
+        </div>
+
+        {authMode === 'register' && (
+          <>
+            <p className="password-hint">
+  <span className="info-icon">i</span>
+  Password must contain at least 8 characters, uppercase, lowercase,
+  a number and a special character.
+</p>
+
+            <label>Confirm Password</label>
+            <div className="password-field">
+              <input
+                type={showConfirmPassword ? 'text' : 'password'}
+                placeholder="Re-enter your password"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                required
+              />
+              <button
+                type="button"
+                className="eye-button"
+                onClick={() =>
+                  setShowConfirmPassword(!showConfirmPassword)
+                }
+                aria-label="Toggle confirm password visibility"
+              >
+                {showConfirmPassword ? '🙈' : '👁️'}
+              </button>
+            </div>
+          </>
+        )}
+
+        {authError && (
+          <p className="auth-error">{authError}</p>
+        )}
+
+        <button className="primary auth-submit" type="submit">
+          {authMode === 'login' ? 'Login' : 'Create Account'}
+        </button>
+
+        <p className="auth-footer">
+          {authMode === 'login'
+            ? "Don't have an account?"
+            : 'Already have an account?'}
+          <button
+            type="button"
+            className="auth-switch"
+            onClick={() => {
+              setAuthMode(authMode === 'login' ? 'register' : 'login');
+              setAuthError('');
+              setConfirmPassword('');
+            }}
+          >
+            {authMode === 'login' ? 'Register' : 'Login'}
+          </button>
+        </p>
+      </form>
+    </div>
+  );
+}
 
     return (
         <div className="app">
@@ -202,7 +457,7 @@ const loadData = async () => {
                 <p className="sidebar-subtitle">Hostel Management</p>
 
                 <nav>
-                    {menu.map((item) => (
+                    {visibleMenu.map((item) => (
                         <button
                             key={item}
                             className={page === item ? 'active' : ''}
@@ -211,6 +466,9 @@ const loadData = async () => {
                             {item}
                         </button>
                     ))}
+                    <button className="primary" onClick={logout}>
+    Logout
+</button>
                 </nav>
 
                 <p className="sidebar-footer">Management Panel</p>

@@ -7,11 +7,19 @@ const Rent = require('./models/rent');
 const Room = require('./models/room');
 const Tenant = require('./models/tenant');
 
+const { authenticateToken, requireOwner } = require('./authMiddleware');
+
 const app = express();
 
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+app.use('/auth', require('./auth'));
+// Protect all management APIs
+app.use('/rooms', authenticateToken, requireOwner);
+app.use('/tenants', authenticateToken, requireOwner);
+app.use('/rents', authenticateToken, requireOwner);
 
 app.get('/', (req, res) => {
     res.send('PG Hostel Manager Backend is running');
@@ -329,6 +337,64 @@ app.put('/tenants/complaint-status/:id', async (req, res) => {
 mongoose.connect(process.env.MONGO_URI)
     .then(() => console.log('MongoDB connected'))
     .catch(err => console.log(err));
+// Tenant: View own rent history
+app.get('/my-rent', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'tenant') {
+      return res.status(403).json({ message: 'Tenant access required' });
+    }
+
+    const User = require('./models/user');
+    const user = await User.findById(req.user.userId);
+
+    if (!user || !user.tenant) {
+      return res.status(404).json({ message: 'Tenant profile not found' });
+    }
+
+    const rents = await Rent.find({ tenant: user.tenant })
+      .sort({ year: -1, month: -1 });
+
+    res.json(rents);
+  } catch (error) {
+    res.status(500).json({ message: 'Failed to load rent history' });
+  }
+});
+
+// Tenant: Raise maintenance complaint
+app.post('/my-complaint', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'tenant') {
+      return res.status(403).json({ message: 'Tenant access required' });
+    }
+
+    const { complaint } = req.body;
+
+    if (!complaint || !complaint.trim()) {
+      return res.status(400).json({ message: 'Enter your complaint' });
+    }
+
+    const User = require('./models/user');
+    const user = await User.findById(req.user.userId);
+
+    if (!user || !user.tenant) {
+      return res.status(404).json({ message: 'Tenant profile not found' });
+    }
+
+    const tenant = await Tenant.findById(user.tenant);
+
+    if (!tenant) {
+      return res.status(404).json({ message: 'Tenant not found' });
+    }
+
+    tenant.complaint = complaint.trim();
+    tenant.complaintStatus = 'Pending';
+    await tenant.save();
+
+    res.json({ message: 'Complaint submitted successfully' });
+  } catch (error) {
+    res.status(500).json({ message: 'Failed to submit complaint' });
+  }
+});
 
 app.listen(process.env.PORT, () => {
     console.log(`Server running on port ${process.env.PORT}`);
