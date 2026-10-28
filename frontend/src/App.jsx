@@ -8,6 +8,7 @@ const API = 'http://localhost:2001';
 function App() {
     const [rooms, setRooms] = useState([]);
     const [tenants, setTenants] = useState([]);
+    const [rents, setRents] = useState([]);
     const [page, setPage] = useState('Dashboard');
     const [message, setMessage] = useState('');
 
@@ -29,17 +30,21 @@ function App() {
         complaint: ''
     });
 
-    const loadData = async () => {
-        try {
-            const roomData = await axios.get(`${API}/rooms`);
-            const tenantData = await axios.get(`${API}/tenants`);
+    
+const loadData = async () => {
+    try {
+        const roomData = await axios.get(`${API}/rooms`);
+        const tenantData = await axios.get(`${API}/tenants`);
+        const rentData = await axios.get(`${API}/rents`);
 
-            setRooms(roomData.data);
-            setTenants(tenantData.data);
-        } catch (error) {
-            setMessage('Cannot connect to backend. Check the server.');
-        }
-    };
+        setRooms(roomData.data);
+        setTenants(tenantData.data);
+        setRents(rentData.data);
+    } catch (error) {
+        setMessage('Cannot connect to backend. Check the server.');
+    }
+};
+
 
     useEffect(() => {
         loadData();
@@ -124,18 +129,20 @@ function App() {
         }
     };
 
-    const updateRent = async (id, paid) => {
-        try {
-            await axios.put(`${API}/tenants/rent/${id}`, {
-                rentPaid: paid
-            });
+    const updateRent = async (rentId, amount) => {
+    try {
+        await axios.post(`${API}/rents/${rentId}/payments`, {
+            amount: Number(amount)
+        });
 
-            await loadData();
-            showMessage('Rent status updated');
-        } catch (error) {
-            showMessage('Failed to update rent status');
-        }
-    };
+        await loadData();
+        showMessage('Payment recorded successfully');
+    } catch (error) {
+        showMessage(
+            error.response?.data?.message || 'Failed to record payment'
+        );
+    }
+};
 
     const addComplaint = async (e) => {
         e.preventDefault();
@@ -484,52 +491,135 @@ function App() {
                     </>
                 )}
 
-                {page === 'Rent' && (
-                    <section className="panel">
-                        <h2>Monthly Rent Tracking</h2>
+                
+{page === 'Rent' && (
+    <section className="panel">
+        <h2>Monthly Rent Tracking</h2>
 
-                        <div className="table-wrap">
-                            <table>
-                                <thead>
-                                    <tr>
-                                        <th>Tenant</th>
-                                        <th>Room</th>
-                                        <th>Rent/Month</th>
-                                        <th>Payment Status</th>
-                                        <th>Action</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {activeTenants.map((t) => (
-                                        <tr key={t._id}>
-                                            <td>{t.name}</td>
-                                            <td>{t.room?.roomNumber || '-'}</td>
-                                            <td>₹{t.room?.rent ?? '-'}</td>
-                                            <td>
-                                                <span className={t.rentPaid ? 'badge green' : 'badge red'}>
-                                                    {t.rentPaid ? 'Paid' : 'Pending'}
-                                                </span>
-                                            </td>
-                                            <td>
-                                                <button
-                                                    className={t.rentPaid ? 'secondary' : 'primary'}
-                                                    onClick={() => updateRent(t._id, !t.rentPaid)}
-                                                >
-                                                    Mark as {t.rentPaid ? 'Pending' : 'Paid'}
-                                                </button>
-                                            </td>
-                                        </tr>
-                                    ))}
-                                    {activeTenants.length === 0 && (
-                                        <tr>
-                                            <td colSpan="5">No active tenants.</td>
-                                        </tr>
+        <form
+            className="form-grid"
+            onSubmit={async (e) => {
+                e.preventDefault();
+
+                const form = e.target;
+
+                try {
+                    await axios.post(`${API}/rents/generate`, {
+                        month: Number(form.month.value),
+                        year: Number(form.year.value)
+                    });
+
+                    await loadData();
+                    showMessage('Monthly rent records generated');
+                } catch (error) {
+                    showMessage(
+                        error.response?.data?.message || 'Failed to generate rent'
+                    );
+                }
+            }}
+        >
+            <select name="month" defaultValue={new Date().getMonth() + 1}>
+                {Array.from({ length: 12 }, (_, i) => (
+                    <option key={i + 1} value={i + 1}>
+                        {new Date(2000, i).toLocaleString('en', {
+                            month: 'long'
+                        })}
+                    </option>
+                ))}
+            </select>
+
+            <input
+                name="year"
+                type="number"
+                defaultValue={new Date().getFullYear()}
+                min="2000"
+                max="2100"
+                required
+            />
+
+            <button className="primary">Generate Monthly Rent</button>
+        </form>
+
+        <div className="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Tenant</th>
+                        <th>Month</th>
+                        <th>Rent</th>
+                        <th>Paid</th>
+                        <th>Outstanding</th>
+                        <th>Status</th>
+                        <th>Payment</th>
+                    </tr>
+                </thead>
+
+                <tbody>
+                    {rents.map((r) => {
+                        const outstanding = r.rentAmount - r.amountPaid;
+
+                        return (
+                            <tr key={r._id}>
+                                <td>{r.tenant?.name || 'Tenant unavailable'}</td>
+                                <td>{r.month}/{r.year}</td>
+                                <td>₹{r.rentAmount}</td>
+                                <td>₹{r.amountPaid}</td>
+                                <td>₹{outstanding}</td>
+                                <td>
+                                    <span className={
+                                        r.status === 'Paid'
+                                            ? 'badge green'
+                                            : r.status === 'Overdue'
+                                            ? 'badge red'
+                                            : 'badge grey'
+                                    }>
+                                        {r.status}
+                                    </span>
+                                </td>
+                                <td>
+                                    {outstanding > 0 && (
+                                        <form
+                                            onSubmit={async (e) => {
+                                                e.preventDefault();
+
+                                                const amount = Number(
+                                                    e.target.amount.value
+                                                );
+
+                                                await updateRent(r._id, amount);
+                                                e.target.reset();
+                                            }}
+                                        >
+                                            <input
+                                                name="amount"
+                                                type="number"
+                                                min="0.01"
+                                                max={outstanding}
+                                                step="0.01"
+                                                placeholder="Amount ₹"
+                                                required
+                                            />
+                                            <button className="primary">
+                                                Pay
+                                            </button>
+                                        </form>
                                     )}
-                                </tbody>
-                            </table>
-                        </div>
-                    </section>
-                )}
+                                </td>
+                            </tr>
+                        );
+                    })}
+
+                    {rents.length === 0 && (
+                        <tr>
+                            <td colSpan="7">No rent records. Generate monthly rent first.</td>
+                        </tr>
+                    )}
+                </tbody>
+            </table>
+        </div>
+    </section>
+)}
+
 
                 {page === 'Maintenance' && (
                     <>

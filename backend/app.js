@@ -3,6 +3,7 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 require('dotenv').config();
 
+const Rent = require('./models/rent');
 const Room = require('./models/room');
 const Tenant = require('./models/tenant');
 
@@ -130,17 +131,170 @@ app.put('/tenants/checkout/:id', async (req, res) => {
 });
 
 // Update rent payment status
-app.put('/tenants/rent/:id', async (req, res) => {
-    const tenant = await Tenant.findById(req.params.id);
-
-    if (!tenant) {
-        return res.status(404).json({ message: 'Tenant not found' });
+function getRentStatus(rent, amountPaid) {
+    if (amountPaid >= rent.rentAmount) {
+        return 'Paid';
     }
 
-    tenant.rentPaid = req.body.rentPaid;
-    await tenant.save();
+    if (new Date(rent.dueDate) < new Date()) {
+        return 'Overdue';
+    }
 
-    res.json({ message: 'Rent status updated', tenant });
+    return 'Due';
+}
+
+function getDaysInMonth(year, month) {
+    return new Date(year, month, 0).getDate();
+}
+
+// Generate monthly rent records
+app.post('/rents/generate', async (req, res) => {
+    try {
+        const { month, year } = req.body;
+
+        if (
+            !Number.isInteger(month) ||
+            month < 1 ||
+            month > 12 ||
+            !Number.isInteger(year) ||
+            year < 2000 ||
+            year > 2100
+        ) {
+            return res.status(400).json({
+                message: 'Enter a valid month and year'
+            });
+        }
+
+        const tenants = await Tenant.find({
+            checkInDate: { $lte: new Date(year, month, 0) },
+            $or: [
+                { checkOutDate: null },
+                { checkOutDate: { $gte: new Date(year, month - 1, 1) } }
+            ]
+        }).populate('room');
+
+        let created = 0;
+
+        for (const tenant of tenants) {
+            if (!tenant.room) continue;
+
+            const monthStart = new Date(year, month - 1, 1);
+            const monthEnd = new Date(year, month, 0);
+
+            const start = tenant.checkInDate > monthStart
+                ? tenant.checkInDate
+                : monthStart;
+
+            const end = tenant.checkOutDate && tenant.checkOutDate < monthEnd
+                ? tenant.checkOutDate
+                : monthEnd;
+
+            const days = getDaysInMonth(year, month);
+            const occupiedDays = Math.max(
+                0,
+                Math.floor((new Date(end.getFullYear(), end.getMonth(), end.getDate()) -
+                    new Date(start.getFullYear(), start.getMonth(), start.getDate())) / 86400000) + 1
+            );
+
+            const rentAmount = Math.round(
+                tenant.room.rent * occupiedDays / days
+            );
+
+            const dueDate = new Date(year, month - 1, 5);
+
+            const result = await Rent.updateOne(
+                { tenant: tenant._id, month, year },
+                {
+                    $setOnInsert: {
+                        tenant: tenant._id,
+                        month,
+                        year,
+                        rentAmount,
+                        amountPaid: 0,
+                        dueDate,
+                        status: dueDate < new Date() ? 'Overdue' : 'Due'
+                    }
+                },
+                { upsert: true }
+            );
+
+            if (result.upsertedCount) created++;
+        }
+
+        res.json({
+            message: 'Monthly rent generation completed',
+            created
+        });
+    } catch (err) {
+        res.status(500).json({ message: err.message });
+    }
+});
+
+app.get('/rents', async (req, res) => {
+    try {
+        const rents = await Rent.find()
+            .populate('tenant')
+            .sort({ year: -1, month: -1 });
+
+        res.json(rents);
+    } catch (err) {
+        res.status(500).json({ message: err.message });
+    }
+});
+
+// Record a payment, including partial payments
+app.post('/rents/:id/payments', async (req, res) => {
+    try {
+        const { amount } = req.body;
+
+        if (typeof amount !== 'number' || !Number.isFinite(amount) || amount <= 0) {
+            return res.status(400).json({
+                message: 'Payment amount must be a positive number'
+            });
+        }
+
+        const rent = await Rent.findById(req.params.id);
+
+        if (!rent) {
+            return res.status(404).json({
+                message: 'Rent record not found'
+            });
+        }
+
+        if (amount > rent.rentAmount - rent.amountPaid) {
+            return res.status(400).json({
+                message: 'Payment exceeds outstanding balance'
+            });
+        }
+
+        rent.amountPaid += amount;
+        rent.status = getRentStatus(rent, rent.amountPaid);
+
+        await rent.save();
+
+        res.json({
+            message: 'Payment recorded successfully',
+            rentAmount: rent.rentAmount,
+            amountPaid: rent.amountPaid,
+            outstandingBalance: rent.rentAmount - rent.amountPaid,
+            status: rent.status
+        });
+    } catch (err) {
+        res.status(400).json({ message: err.message });
+    }
+});
+
+// View a tenant's rent history
+app.get('/rents/tenant/:tenantId', async (req, res) => {
+    try {
+        const rents = await Rent.find({
+            tenant: req.params.tenantId
+        }).sort({ year: -1, month: -1 });
+
+        res.json(rents);
+    } catch (err) {
+        res.status(400).json({ message: err.message });
+    }
 });
 
 // Add maintenance complaint

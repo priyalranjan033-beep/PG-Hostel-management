@@ -1,10 +1,13 @@
+
 {
   "name": "backend",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "PG and Hostel Management Backend",
+  "main": "app.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node app.js",
+    "dev": "node --watch app.js",
+    "test": "node --test"
   },
   "keywords": [],
   "author": "",
