@@ -115,27 +115,60 @@ app.get('/tenants', async (req, res) => {
 
 // Tenant check-out
 app.put('/tenants/checkout/:id', async (req, res) => {
-    const tenant = await Tenant.findById(req.params.id);
+    try {
+        const tenant = await Tenant.findById(req.params.id);
 
-    if (!tenant) {
-        return res.status(404).json({ message: 'Tenant not found' });
+        if (!tenant) {
+            return res.status(404).json({ message: 'Tenant not found' });
+        }
+
+        if (tenant.checkOutDate) {
+            return res.status(400).json({
+                message: 'Tenant already checked out'
+            });
+        }
+
+        const { deduction = 0, reason = '' } = req.body;
+
+        const deposit = tenant.securityDeposit || 0;
+        const deductionAmount = Number(deduction);
+
+        if (
+            !Number.isFinite(deductionAmount) ||
+            deductionAmount < 0 ||
+            deductionAmount > deposit
+        ) {
+            return res.status(400).json({
+                message: 'Deduction must be between 0 and the security deposit'
+            });
+        }
+
+        tenant.checkOutDate = new Date();
+        tenant.depositDeduction = deductionAmount;
+        tenant.deductionReason = String(reason).trim();
+        tenant.depositRefunded = deposit - deductionAmount;
+        tenant.depositSettled = true;
+
+        await tenant.save();
+
+        const room = await Room.findById(tenant.room);
+
+        if (room) {
+            room.occupiedBeds = Math.max(0, room.occupiedBeds - 1);
+            await room.save();
+        }
+
+        res.json({
+            message: 'Tenant checked out successfully',
+            securityDeposit: deposit,
+            deduction: deductionAmount,
+            deductionReason: tenant.deductionReason,
+            refund: tenant.depositRefunded
+        });
+    } catch (error) {
+        console.error('Checkout error:', error);
+        res.status(500).json({ message: 'Checkout failed' });
     }
-
-    if (tenant.checkOutDate) {
-        return res.status(400).json({ message: 'Tenant already checked out' });
-    }
-
-    tenant.checkOutDate = new Date();
-    await tenant.save();
-
-    const room = await Room.findById(tenant.room);
-
-    if (room) {
-        room.occupiedBeds = Math.max(0, room.occupiedBeds - 1);
-        await room.save();
-    }
-
-    res.json({ message: 'Tenant checked out successfully' });
 });
 
 // Update rent payment status

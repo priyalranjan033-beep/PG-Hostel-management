@@ -1,7 +1,8 @@
-
+import jsPDF from 'jspdf';
 import { useEffect, useState } from 'react';
 import axios from 'axios';
 import './App.css';
+const resetToken = new URLSearchParams(window.location.search).get('token');
 
 const API = 'http://localhost:2001';
 
@@ -16,6 +17,9 @@ axios.interceptors.request.use((config) => {
 });
 
 function App() {
+    const [newPassword, setNewPassword] = useState('');
+const [resetMessage, setResetMessage] = useState('');
+const [resetLoading, setResetLoading] = useState(false);
     const [confirmPassword, setConfirmPassword] = useState('');
 const [showPassword, setShowPassword] = useState(false);
 const [showConfirmPassword, setShowConfirmPassword] = useState(false);
@@ -145,6 +149,28 @@ const loadData = async () => {
     } catch (error) {
         setMessage('Cannot connect to backend. Check the server.');
     }
+    const downloadRentReceipt = (rent, tenantName) => {
+    const doc = new jsPDF();
+
+    doc.setFontSize(20);
+    doc.text('PG Hostel Manager', 20, 20);
+    doc.setFontSize(16);
+    doc.text('RENT PAYMENT RECEIPT', 20, 35);
+
+    doc.setFontSize(12);
+    doc.text(`Tenant: ${tenantName || 'Tenant'}`, 20, 50);
+    doc.text(`Rent Period: ${rent.month}/${rent.year}`, 20, 62);
+    doc.text(`Total Rent: Rs. ${rent.rentAmount}`, 20, 74);
+    doc.text(`Amount Paid: Rs. ${rent.amountPaid}`, 20, 86);
+    doc.text(
+        `Balance: Rs. ${Math.max(0, rent.rentAmount - rent.amountPaid)}`,
+        20,
+        98
+    );
+    doc.text(`Status: ${rent.status}`, 20, 110);
+
+    doc.save(`Rent-Receipt-${rent.month}-${rent.year}.pdf`);
+};
 };
 const loadMyRent = async () => {
   try {
@@ -246,12 +272,52 @@ const submitComplaint = async (e) => {
         if (!window.confirm('Check out this tenant?')) return;
 
         try {
-            await axios.put(`${API}/tenants/checkout/${id}`);
-            await loadData();
-            showMessage('Tenant checked out successfully');
-        } catch (error) {
-            showMessage(error.response?.data?.message || 'Check-out failed');
+    const deductionInput = window.prompt(
+        'Enter security deposit deduction amount (₹):',
+        '0'
+    );
+
+    if (deductionInput === null) return;
+
+    const deduction = Number(deductionInput);
+
+    if (!Number.isFinite(deduction) || deduction < 0) {
+        showMessage('Please enter a valid deduction amount');
+        return;
+    }
+
+    let reason = '';
+
+    if (deduction > 0) {
+        const reasonInput = window.prompt(
+            'Reason for deduction:'
+        );
+
+        if (reasonInput === null) return;
+
+        reason = reasonInput.trim();
+
+        if (!reason) {
+            showMessage('Please enter the deduction reason');
+            return;
         }
+    }
+
+    const response = await axios.put(
+        `${API}/tenants/checkout/${id}`,
+        { deduction, reason }
+    );
+
+    await loadData();
+
+    showMessage(
+        `Checkout successful! Deposit refund: ₹${response.data.refund}`
+    );
+} catch (error) {
+    showMessage(
+        error.response?.data?.message || 'Check-out failed'
+    );
+}
     };
 
     const updateRent = async (rentId, amount) => {
@@ -323,7 +389,52 @@ const submitComplaint = async (e) => {
     const complaints = tenants.filter(
         (t) => t.complaint
     );
-    
+    if (resetToken) {
+  return (
+    <div className="auth-page">
+      <form
+        className="auth-card"
+        onSubmit={async (e) => {
+          e.preventDefault();
+          setResetMessage('');
+          setResetLoading(true);
+
+          try {
+            const response = await axios.post(
+              `${API}/auth/reset-password/${resetToken}`,
+              { password: newPassword }
+            );
+            setResetMessage(response.data.message);
+            setNewPassword('');
+          } catch (error) {
+            setResetMessage(
+              error.response?.data?.message || 'Password reset failed.'
+            );
+          } finally {
+            setResetLoading(false);
+          }
+        }}
+      >
+        <h2>Reset Password</h2>
+
+        <label>New Password</label>
+        <input
+          type="password"
+          value={newPassword}
+          onChange={(e) => setNewPassword(e.target.value)}
+          placeholder="Enter new password"
+          required
+        />
+
+        <button className="primary auth-submit" type="submit" disabled={resetLoading}>
+          {resetLoading ? 'Resetting...' : 'Reset Password'}
+        </button>
+
+        {resetMessage && <p>{resetMessage}</p>}
+      </form>
+    </div>
+  );
+}
 if (!user) {
   return (
     <div className="auth-page">
@@ -428,7 +539,27 @@ if (!user) {
         <button className="primary auth-submit" type="submit">
           {authMode === 'login' ? 'Login' : 'Create Account'}
         </button>
+{authMode === 'login' && (
+  <p style={{ textAlign: 'right', marginTop: '10px' }}>
+    <button
+      type="button"
+      className="auth-switch"
+      onClick={() => {
+        const email = authForm.email.trim();
+        if (!email) {
+          setAuthError('Enter your email first.');
+          return;
+        }
 
+        axios.post(`${API}/auth/forgot-password`, { email })
+          .then((res) => setAuthError(res.data.message))
+          .catch(() => setAuthError('Unable to send reset email. Try again.'));
+      }}
+    >
+      Forgot Password?
+    </button>
+  </p>
+)}
         <p className="auth-footer">
           {authMode === 'login'
             ? "Don't have an account?"
@@ -466,8 +597,8 @@ if (!user) {
                             {item}
                         </button>
                     ))}
-                    <button className="primary" onClick={logout}>
-    Logout
+                    <button className="logout-btn" onClick={logout}>
+     Logout
 </button>
                 </nav>
 
@@ -483,6 +614,61 @@ if (!user) {
                 </header>
 
                 {message && <div className="message">{message}</div>}
+
+{page === 'My Rent' && user?.role === 'tenant' && (
+    <section className="content-card">
+        <h2>My Rent History</h2>
+
+        {myRents.length === 0 ? (
+            <p>No rent records found for your account.</p>
+        ) : (
+            <div className="table-wrapper">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Month</th>
+                            <th>Total Rent</th>
+                            <th>Paid</th>
+                            <th>Balance</th>
+                            <th>Status</th>
+                            <th>Receipt</th>
+                        </tr>
+                    </thead>
+
+                    <tbody>
+                        {myRents.map((r) => (
+                            <tr key={r._id}>
+                                <td>{r.month}/{r.year}</td>
+                                <td>₹{r.rentAmount}</td>
+                                <td>₹{r.amountPaid}</td>
+                                <td>
+                                    ₹{Math.max(
+                                        0,
+                                        r.rentAmount - r.amountPaid
+                                    )}
+                                </td>
+                                <td>{r.status}</td>
+                                <td>
+                                    <button
+                                        className="primary"
+                                        onClick={() =>
+                                            downloadRentReceipt(
+                                                r,
+                                                user.name
+                                            )
+                                        }
+                                    >
+                                        Download Receipt
+                                    </button>
+                                </td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
+        )}
+    </section>
+)}
 
                 {page === 'Dashboard' && (
                     <>
@@ -809,63 +995,87 @@ if (!user) {
                         <th>Outstanding</th>
                         <th>Status</th>
                         <th>Payment</th>
+                        <th>Receipt</th>
                     </tr>
                 </thead>
 
                 <tbody>
                     {rents.map((r) => {
-                        const outstanding = r.rentAmount - r.amountPaid;
+    const outstanding = Math.max(
+        0,
+        r.rentAmount - r.amountPaid
+    );
 
-                        return (
-                            <tr key={r._id}>
-                                <td>{r.tenant?.name || 'Tenant unavailable'}</td>
-                                <td>{r.month}/{r.year}</td>
-                                <td>₹{r.rentAmount}</td>
-                                <td>₹{r.amountPaid}</td>
-                                <td>₹{outstanding}</td>
-                                <td>
-                                    <span className={
-                                        r.status === 'Paid'
-                                            ? 'badge green'
-                                            : r.status === 'Overdue'
-                                            ? 'badge red'
-                                            : 'badge grey'
-                                    }>
-                                        {r.status}
-                                    </span>
-                                </td>
-                                <td>
-                                    {outstanding > 0 && (
-                                        <form
-                                            onSubmit={async (e) => {
-                                                e.preventDefault();
+    return (
+        <tr key={r._id}>
+            <td>{r.tenant?.name || 'Tenant unavailable'}</td>
+            <td>{r.month}/{r.year}</td>
+            <td>₹{r.rentAmount}</td>
+            <td>₹{r.amountPaid}</td>
+            <td>₹{outstanding}</td>
 
-                                                const amount = Number(
-                                                    e.target.amount.value
-                                                );
+            <td>
+                <span
+                    className={
+                        r.status === 'Paid'
+                            ? 'badge green'
+                            : r.status === 'Overdue'
+                            ? 'badge red'
+                            : 'badge grey'
+                    }
+                >
+                    {r.status}
+                </span>
+            </td>
 
-                                                await updateRent(r._id, amount);
-                                                e.target.reset();
-                                            }}
-                                        >
-                                            <input
-                                                name="amount"
-                                                type="number"
-                                                min="0.01"
-                                                max={outstanding}
-                                                step="0.01"
-                                                placeholder="Amount ₹"
-                                                required
-                                            />
-                                            <button className="primary">
-                                                Pay
-                                            </button>
-                                        </form>
-                                    )}
-                                </td>
-                            </tr>
-                        );
-                    })}
+            <td>
+                {outstanding > 0 && (
+                    <form
+                        onSubmit={async (e) => {
+                            e.preventDefault();
+
+                            const amount = Number(
+                                e.currentTarget.amount.value
+                            );
+
+                            await updateRent(r._id, amount);
+                            e.currentTarget.reset();
+                        }}
+                    >
+                        <input
+                            name="amount"
+                            type="number"
+                            min="0.01"
+                            max={outstanding}
+                            step="0.01"
+                            placeholder="Amount ₹"
+                            required
+                        />
+
+                        <button type="submit" className="primary">
+                            Pay
+                        </button>
+                    </form>
+                )}
+            </td>
+
+            <td>
+                <button
+                    type="button"
+                    className="primary"
+                    onClick={() =>
+                        downloadRentReceipt(
+                            r,
+                            r.tenant?.name || 'Tenant'
+                        )
+                    }
+                >
+                    Download Receipt
+                </button>
+            </td>
+        </tr>
+    );
+})}
 
                     {rents.length === 0 && (
                         <tr>

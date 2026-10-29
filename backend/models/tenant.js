@@ -37,6 +37,31 @@ const tenantSchema = new mongoose.Schema({
     checkOutDate: {
         type: Date,
         default: null
+    },
+
+    // Security deposit tracking
+    securityDeposit: {
+        type: Number,
+        default: 0,
+        min: 0
+    },
+    depositDeduction: {
+        type: Number,
+        default: 0,
+        min: 0
+    },
+    deductionReason: {
+        type: String,
+        default: ''
+    },
+    depositRefunded: {
+        type: Number,
+        default: 0,
+        min: 0
+    },
+    depositSettled: {
+        type: Boolean,
+        default: false
     }
 });
 

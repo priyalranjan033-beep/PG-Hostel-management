@@ -3,7 +3,8 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const User = require('./models/user');
 const Tenant = require('./models/tenant');
-
+const crypto = require('crypto');
+const nodemailer = require('nodemailer');
 const router = express.Router();
 
 const strongPassword =
@@ -88,7 +89,63 @@ router.post('/register', async (req, res) => {
     });
   }
 });
+// Forgot Password
+router.post('/forgot-password', async (req, res) => {
+  try {
+    const email = req.body.email?.trim().toLowerCase();
 
+    if (!email) {
+      return res.status(400).json({ message: 'Email is required.' });
+    }
+
+    const user = await User.findOne({ email });
+
+    // Same response whether account exists or not
+    if (!user) {
+      return res.json({
+        message: 'If this email is registered, a reset link will be sent.'
+      });
+    }
+
+    const resetToken = crypto.randomBytes(32).toString('hex');
+
+    user.resetPasswordToken = crypto
+      .createHash('sha256')
+      .update(resetToken)
+      .digest('hex');
+
+    user.resetPasswordExpires = new Date(Date.now() + 15 * 60 * 1000);
+
+    await user.save();
+
+    const transporter = nodemailer.createTransport({
+      service: 'gmail',
+      auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS?.replace(/\s/g, '')
+      }
+    });
+
+    const resetLink =
+      `${process.env.FRONTEND_URL}/reset-password?token=${resetToken}`;
+
+    await transporter.sendMail({
+      from: process.env.EMAIL_USER,
+      to: user.email,
+      subject: 'PG Hostel Manager - Reset Password',
+      text: `You requested a password reset.\n\nOpen this link to reset your password within 15 minutes:\n${resetLink}\n\nIf you did not request this, ignore this email.`
+    });
+
+    return res.json({
+      message: 'If this email is registered, a reset link will be sent.'
+    });
+  } catch (error) {
+    console.error('Forgot password error:', error.message);
+    return res.status(500).json({
+      message: 'Unable to process the request. Please try again later.'
+    });
+  }
+});
 // Login
 router.post('/login', async (req, res) => {
   try {
@@ -141,5 +198,51 @@ router.post('/login', async (req, res) => {
     });
   }
 });
+// Reset Password
+router.post('/reset-password/:token', async (req, res) => {
+  try {
+    const { password } = req.body;
+    const { token } = req.params;
 
+    const strongPassword =
+      /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{8,}$/;
+
+    if (!strongPassword.test(password || '')) {
+      return res.status(400).json({
+        message: 'Password must be at least 8 characters and include uppercase, lowercase, number and special character.'
+      });
+    }
+
+    const hashedToken = crypto
+      .createHash('sha256')
+      .update(token)
+      .digest('hex');
+
+    const user = await User.findOne({
+      resetPasswordToken: hashedToken,
+      resetPasswordExpires: { $gt: new Date() }
+    });
+
+    if (!user) {
+      return res.status(400).json({
+        message: 'Reset link is invalid or expired. Please request a new one.'
+      });
+    }
+
+    user.password = await bcrypt.hash(password, 12);
+    user.resetPasswordToken = null;
+    user.resetPasswordExpires = null;
+
+    await user.save();
+
+    return res.json({
+      message: 'Password reset successful. Please log in with your new password.'
+    });
+  } catch (error) {
+    console.error('Reset password error:', error.message);
+    return res.status(500).json({
+      message: 'Unable to reset password. Please try again.'
+    });
+  }
+});
 module.exports = router;
